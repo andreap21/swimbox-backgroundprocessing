@@ -13,6 +13,25 @@ def _headers():
     return {'Authorization': f'Bearer {os.getenv("SWIMBOXAPIS_CLIENT_TOKEN", "")}'}
 
 
+def fetch_user(user_id):
+    """GET /users/?id=<user_id> — activity.user_id matches user.id."""
+    try:
+        resp = requests.get(
+            f'{_base_url()}/users/',
+            params={'id': user_id},
+            headers=_headers(),
+            timeout=5
+        )
+        resp.raise_for_status()
+        users = resp.json()
+        if isinstance(users, list) and users:
+            return users[0]
+        return None
+    except Exception as e:
+        logger.error(f'[PERSONAL] Failed to fetch user for {user_id}: {e}')
+        return None
+
+
 def fetch_athlete(user_id):
     """GET /athletes/?user_id=<user_id> — returns first match or None."""
     try:
@@ -53,7 +72,13 @@ def update_peak_performances(athlete, new_peaks):
             if sp.get('sport_type') == 'SWIMMING':
                 profile = sp.setdefault('profile', {})
                 existing = dict(profile.get('peak_performances') or {})
-                existing.update(new_peaks)
+                # Merge new computed peaks while preserving any user_value overrides
+                for dist_str, new_peak in new_peaks.items():
+                    merged = {**new_peak}
+                    existing_entry = existing.get(dist_str) or {}
+                    if 'user_value' in existing_entry:
+                        merged['user_value'] = existing_entry['user_value']
+                    existing[dist_str] = merged
                 profile['peak_performances'] = existing
                 swimming_found = True
                 break

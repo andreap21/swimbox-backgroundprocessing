@@ -49,6 +49,15 @@ def save_performances(activity):
 
     pool_id = activity.get('pool_id')
     user_id = activity.get('user_id')
+
+    # Fetch user to get display name — name lives in the user table, linked via user_id
+    from services.athlete import fetch_user
+    athlete_name = ''
+    if user_id:
+        user = fetch_user(user_id)
+        if user:
+            athlete_name = (user.get('name') or '').strip()
+
     db = get_db()
     collection = db[PERFORMANCES_COLLECTION]
     personal_record_candidates = {}  # dist_str -> candidate dict
@@ -76,6 +85,7 @@ def save_performances(activity):
                 doc = {
                     'id': 'PRF_' + ''.join(random.choices(string.digits, k=10)),
                     'user_id': user_id,
+                    'athlete_name': athlete_name,
                     'activity_id': activity_id,
                     'pool_id': str(pool_id),
                     'pool_name': activity.get('pool_name', ''),
