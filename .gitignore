@@ -3,3 +3,13 @@ venv/
 __pycache__/
 *.pyc
 *.pyo
+
+# Local-only security audit artefacts (must NEVER be committed).
+# secrets_to_rotate.txt: live credentials in plaintext, file mode 0600 on disk.
+# security_review_*.md: per-repo vulnerability findings with code paths and
+# exploit details — useful local reference, but a roadmap for an attacker
+# if it ever leaked.
+# security-test/: per-repo analysis prompts and vulnerability specs.
+secrets_to_rotate.txt
+security_review_*.md
+security-test/
