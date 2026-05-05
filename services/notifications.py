@@ -6,7 +6,17 @@ logger = logging.getLogger(__name__)
 
 
 def send_personal_record_notification(user_id, distance_m, time_s):
-    """POST /user-notifications/ to create a personal record notification."""
+    """POST /user-notifications/ to create a personal record notification.
+
+    Title and body are localised server-side via title_key/message_key —
+    backgroundprocessing doesn't need to know which language the user
+    prefers or how to format the strings. swimboxapis resolves both based
+    on user.preferences.Language and renders the templates with
+    template_vars (see services/cms/user_notifications/apis.py POST).
+
+    The label templates live in Strapi under
+    `notification.personal_record.title` and `notification.personal_record.body`.
+    """
     try:
         url = os.getenv('SWIMBOXAPIS_URL', '')
         token = os.getenv('SWIMBOXAPIS_CLIENT_TOKEN', '')
@@ -14,14 +24,15 @@ def send_personal_record_notification(user_id, distance_m, time_s):
             logger.warning('[PERSONAL] SWIMBOXAPIS_URL or CLIENT_TOKEN not set — skipping notification')
             return
 
-        minutes = int(time_s // 60)
-        seconds = int(time_s % 60)
-        time_str = f"{minutes}'{seconds:02d}\""
-
         payload = {
             'user_id': user_id,
-            'title': 'Nuovo personale! 🏊',
-            'message': f'Congratulazioni! Hai un nuovo personale per la distanza {distance_m}m con un tempo di {time_str}',
+            'title_key': 'notification.personal_record.title',
+            'message_key': 'notification.personal_record.body',
+            # Variables interpolated into the template. Distinct from
+            # `additional_fields` (which is structured metadata stored on
+            # the notification entry); they happen to overlap here but
+            # the intent differs.
+            'template_vars': {'distance_m': distance_m},
             'type': 'PERSONAL_BEST',
             'additional_fields': {'distance_m': distance_m, 'time_s': time_s},
         }
@@ -32,6 +43,6 @@ def send_personal_record_notification(user_id, distance_m, time_s):
             timeout=5
         )
         resp.raise_for_status()
-        logger.info(f'[PERSONAL] Notification sent for user {user_id} dist={distance_m}m time={time_str}')
+        logger.info(f'[PERSONAL] Notification queued for user {user_id} dist={distance_m}m')
     except Exception as e:
         logger.error(f'[PERSONAL] Failed to send notification for user {user_id} dist={distance_m}m: {e}')
