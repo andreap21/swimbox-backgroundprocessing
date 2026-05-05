@@ -36,11 +36,18 @@ def send_personal_record_notification(user_id, distance_m, time_s):
             'type': 'PERSONAL_BEST',
             'additional_fields': {'distance_m': distance_m, 'time_s': time_s},
         }
+        # 30 s — swimboxapis can take 10–15 s on a cold labels cache (the
+        # first call per locale after a deploy fetches all labels from
+        # Strapi, paginated 25 at a time). Once cached the call is fast.
+        # Backgroundprocessing's Celery worker can spare the time; the 5 s
+        # we used to have surfaced as an alarming "Read timed out" log
+        # whenever the worker ran shortly after a deploy, even though the
+        # notification itself succeeded.
         resp = requests.post(
             f'{url}/user-notifications/',
             json=payload,
             headers={'Authorization': f'Bearer {token}'},
-            timeout=5
+            timeout=30
         )
         resp.raise_for_status()
         logger.info(f'[PERSONAL] Notification queued for user {user_id} dist={distance_m}m')
