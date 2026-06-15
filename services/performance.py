@@ -2,6 +2,7 @@ import os
 import logging
 import random
 import string
+import time
 import requests
 from datetime import datetime, timezone
 
@@ -153,23 +154,45 @@ def _process_personal_records(user_id, candidates):
 
 
 def mark_activity_calculated(activity_id):
-    """PATCH swimboxapis to set performance_calculated=True on the activity."""
-    try:
-        url = os.getenv('SWIMBOXAPIS_URL', '')
-        token = os.getenv('SWIMBOXAPIS_CLIENT_TOKEN', '')
-        if not url or not token:
-            logger.warning('[PERF] SWIMBOXAPIS_URL or SWIMBOXAPIS_CLIENT_TOKEN not set — skipping mark')
+    """PATCH swimboxapis to set performance_calculated=True on the activity.
+
+    swimboxapis rate-limits by caller, and a backlog drain can briefly exceed
+    it (all our calls share one service token). A 429 only fails the *mark* —
+    the leaderboard/personal-record writes already happened — but leaving the
+    activity unmarked risks reprocessing, so we retry with backoff, honouring
+    Retry-After. Bounded so a persistent failure can't hang the worker.
+    """
+    url = os.getenv('SWIMBOXAPIS_URL', '')
+    token = os.getenv('SWIMBOXAPIS_CLIENT_TOKEN', '')
+    if not url or not token:
+        logger.warning('[PERF] SWIMBOXAPIS_URL or SWIMBOXAPIS_CLIENT_TOKEN not set — skipping mark')
+        return
+
+    max_attempts = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.patch(
+                f'{url}/activities/{activity_id}',
+                json={'performance_calculated': True},
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=5
+            )
+            if response.status_code == 429 and attempt < max_attempts:
+                retry_after = response.headers.get('Retry-After')
+                delay = float(retry_after) if (retry_after and retry_after.isdigit()) else min(2 ** attempt, 15)
+                logger.warning(f'[PERF] mark {activity_id} 429 (attempt {attempt}/{max_attempts}) — retrying in {delay}s')
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            logger.info(f'[PERF] Marked activity {activity_id} as performance_calculated=True')
             return
-        response = requests.patch(
-            f'{url}/activities/{activity_id}',
-            json={'performance_calculated': True},
-            headers={'Authorization': f'Bearer {token}'},
-            timeout=5
-        )
-        response.raise_for_status()
-        logger.info(f'[PERF] Marked activity {activity_id} as performance_calculated=True')
-    except Exception as e:
-        logger.error(f'[PERF] Failed to mark activity {activity_id}: {e}')
+        except Exception as e:
+            if attempt < max_attempts:
+                delay = min(2 ** attempt, 15)
+                logger.warning(f'[PERF] mark {activity_id} failed (attempt {attempt}/{max_attempts}): {e} — retrying in {delay}s')
+                time.sleep(delay)
+                continue
+            logger.error(f'[PERF] Failed to mark activity {activity_id} after {max_attempts} attempts: {e}')
 
 
 def _ensure_indexes(collection):
