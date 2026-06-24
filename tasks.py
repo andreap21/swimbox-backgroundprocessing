@@ -19,3 +19,12 @@ def hello_task():
 def calculate_leaderboard_task(activity):
     from services.performance import save_performances
     save_performances(activity)
+
+
+@celery.task(name='tasks.replan_athlete_task')
+def replan_athlete_task(user_id):
+    """Run the Veyra methodology replan for one athlete (Trello #441).
+    Enqueued by swimboxapis (POST /events/replan-athlete) when a pro user with a
+    saved training_plan_info upgrades or saves their plan profile."""
+    from services.replan import run_replan_for_user
+    run_replan_for_user(user_id)
