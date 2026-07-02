@@ -27,13 +27,18 @@ def calculate_leaderboard():
 @token_required
 def replan_athlete():
     """Enqueue a methodology replan for one athlete (Trello #441).
-    Body: {"user_id": "<athlete user_id>"}. Called by swimboxapis when a pro user
-    with a saved training_plan_info upgrades or saves their plan profile."""
+    Body: {"user_id": "<athlete user_id>", "mode": "weekly"|"daily"} (mode
+    optional, defaults weekly). Called by swimboxapis when a pro user with a
+    saved training_plan_info upgrades or saves their plan profile, and by the
+    Sunday scheduler for every active-plan pro athlete."""
     payload = request.get_json(force=True) or {}
     user_id = payload.get('user_id')
+    mode = payload.get('mode') or 'weekly'
     if not user_id:
         return jsonify({'error': 'user_id is required'}), 400
-    replan_athlete_task.delay(user_id)
+    if mode not in ('weekly', 'daily'):
+        return jsonify({'error': f"unknown mode '{mode}'"}), 400
+    replan_athlete_task.delay(user_id, mode=mode)
     return jsonify({'message': 'Task enqueued'}), 202
 
 

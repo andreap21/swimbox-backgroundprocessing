@@ -22,9 +22,12 @@ def calculate_leaderboard_task(activity):
 
 
 @celery.task(name='tasks.replan_athlete_task')
-def replan_athlete_task(user_id):
+def replan_athlete_task(user_id, mode='weekly'):
     """Run the Veyra methodology replan for one athlete (Trello #441).
     Enqueued by swimboxapis (POST /events/replan-athlete) when a pro user with a
-    saved training_plan_info upgrades or saves their plan profile."""
+    saved training_plan_info upgrades or saves their plan profile — and by the
+    Sunday scheduler (swimboxapis scripts/scheduled_weekly_replan.py) for every
+    active-plan pro athlete. `mode` is forwarded verbatim to the chatbot:
+    'weekly' = review + append next week; 'daily' = prose only (reserved)."""
     from services.replan import run_replan_for_user
-    run_replan_for_user(user_id)
+    run_replan_for_user(user_id, mode=mode)

@@ -5,7 +5,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def run_replan_for_user(user_id):
+def run_replan_for_user(user_id, mode='weekly'):
     """Trigger the Veyra methodology replan for one athlete (Trello #441).
 
     The coaching brain lives in swimbox-chatbot; this worker is a thin consumer.
@@ -34,7 +34,9 @@ def run_replan_for_user(user_id):
     try:
         resp = requests.post(
             f'{url}/coaching/run-replan',
-            json={'user_id': user_id, 'write': True},
+            # mode: 'weekly' (review + append next week) | 'daily' (prose only,
+            # reserved). The chatbot route parses it and sets plan_week.
+            json={'user_id': user_id, 'write': True, 'mode': mode},
             headers={'Authorization': f'Bearer {api_key}'},
             # Generous: the replan clones + adapts up to ~9 sessions into Strapi +
             # creates events; comfortably within a worker's budget.
