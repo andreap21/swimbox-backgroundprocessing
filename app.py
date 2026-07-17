@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from celery_app import celery
-from tasks import hello_task, calculate_leaderboard_task, replan_athlete_task
+from tasks import hello_task, calculate_leaderboard_task, replan_athlete_task, match_activity_task
 from auth import token_required
 
 app = Flask(__name__)
@@ -20,6 +20,21 @@ def calculate_leaderboard():
     if not activity:
         return jsonify({'error': 'No activity payload'}), 400
     calculate_leaderboard_task.delay(activity)
+    return jsonify({'message': 'Task enqueued'}), 202
+
+
+@app.route('/events/match-activity', methods=['POST'])
+@token_required
+def match_activity():
+    """Enqueue an activity ↔ planned-session match (automated mark-as-done).
+    Body: {"activity_id": "...", "user_id": "..."}. Called by swimboxapis
+    right after a swim activity is created from a Strava/Garmin sync."""
+    payload = request.get_json(force=True) or {}
+    activity_id = payload.get('activity_id')
+    user_id = payload.get('user_id')
+    if not activity_id or not user_id:
+        return jsonify({'error': 'activity_id and user_id are required'}), 400
+    match_activity_task.delay(activity_id, user_id)
     return jsonify({'message': 'Task enqueued'}), 202
 
 

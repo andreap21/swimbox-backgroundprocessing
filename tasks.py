@@ -21,6 +21,17 @@ def calculate_leaderboard_task(activity):
     save_performances(activity)
 
 
+@celery.task(name='tasks.match_activity_task')
+def match_activity_task(activity_id, user_id):
+    """Try to auto-match a freshly ingested activity to the planned session
+    scheduled on the day it was performed (automated mark-as-done). Enqueued
+    by swimboxapis right after activity creation (POST /events/match-activity);
+    the matching + mark-as-done logic lives in swimboxapis — this task just
+    calls its internal endpoint."""
+    from services.matching import run_match_for_activity
+    run_match_for_activity(activity_id, user_id)
+
+
 @celery.task(name='tasks.replan_athlete_task')
 def replan_athlete_task(user_id, mode='weekly'):
     """Run the Veyra methodology replan for one athlete (Trello #441).
