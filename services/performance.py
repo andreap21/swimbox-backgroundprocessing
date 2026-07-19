@@ -15,6 +15,33 @@ PERFORMANCES_COLLECTION = 'performances'
 SWIM_SPORT_TYPES = {'Swim', 'swim', 'SWIM'}
 PERSONAL_RECORD_GRADES = {'A', 'B', 'C', 'D'}  # E is excluded from both leaderboard and personal records
 
+# Card 475: on first connect, Strava's 6-month backfill and Garmin's historical
+# webhook burst create many old activities at once — each of which would fire a
+# PERSONAL_BEST push, spamming the user. A genuinely NEW swim is always recent,
+# while backfilled history is old, so we suppress the PUSH (not the record
+# update) for activities older than this window. Peaks/leaderboard still update
+# so the profile is correct immediately — the athlete just isn't notified about
+# months-old activities they're importing.
+NOTIFY_RECENCY_DAYS = int(os.getenv('ACTIVITY_NOTIFY_RECENCY_DAYS', '2'))
+
+
+def _activity_is_recent(activity, days=NOTIFY_RECENCY_DAYS):
+    """True if the activity's start date is within `days` of now (so a
+    notification about it is wanted). Unparseable/missing date → treat as recent
+    (fail-open: never silently drop a real new activity's notification)."""
+    raw = (activity or {}).get('starting_date')
+    if not raw:
+        return True
+    try:
+        # Both providers store ISO8601 with a trailing 'Z'.
+        dt = datetime.fromisoformat(str(raw).replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return True
+    age = datetime.now(timezone.utc) - dt
+    return age.total_seconds() <= days * 86400
+
 
 def evaluate_performance(activity, distance_m, peak):
     """Grade the performance. Returns 'B' by default — logic to be implemented."""
@@ -113,18 +140,23 @@ def save_performances(activity):
                 'grade': grade,
             }
 
-    # Process personal records against athlete's existing peaks
+    # Process personal records against athlete's existing peaks. On first
+    # connect (old backfilled activities) the PR is still RECORDED but the push
+    # is suppressed to avoid spamming — gated on activity recency (Card 475).
     if personal_record_candidates and user_id:
-        _process_personal_records(user_id, personal_record_candidates)
+        _process_personal_records(user_id, personal_record_candidates,
+                                  notify=_activity_is_recent(activity))
 
     _ensure_indexes(collection)
     mark_activity_calculated(activity_id)
 
 
-def _process_personal_records(user_id, candidates):
+def _process_personal_records(user_id, candidates, notify=True):
     """
     Compare candidate performances against the athlete's existing peak_performances.
-    Updates the athlete profile and sends a push notification for each new personal record.
+    Updates the athlete profile and (when `notify`) sends a push notification for
+    each new personal record. `notify=False` (old backfilled activity on first
+    connect) still records the PR — it only skips the push (Card 475).
     """
     from services.athlete import fetch_athlete, get_peak_performances, update_peak_performances
     from services.notifications import send_personal_record_notification
@@ -149,8 +181,12 @@ def _process_personal_records(user_id, candidates):
 
     if records_to_save:
         update_peak_performances(athlete, records_to_save)
-        for dist_str, record in records_to_save.items():
-            send_personal_record_notification(user_id, int(dist_str), record['time_s'])
+        if notify:
+            for dist_str, record in records_to_save.items():
+                send_personal_record_notification(user_id, int(dist_str), record['time_s'])
+        else:
+            logger.info(f'[PERSONAL] {len(records_to_save)} record(s) saved for {user_id} '
+                        f'without push (old/backfill activity — Card 475)')
 
 
 def mark_activity_calculated(activity_id):
