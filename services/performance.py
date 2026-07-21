@@ -69,6 +69,17 @@ def save_performances(activity):
         mark_activity_calculated(activity_id)
         return
 
+    # Gate: MANUAL activities never concur for performances — neither pool
+    # leaderboard nor personal records. Their laps can be user-typed or
+    # LLM-generated, not device-recorded; excluded by design for any reason.
+    if activity.get('is_manual') or any(
+        (src or {}).get('source_id') == 'smartcoach_manual'
+        for src in (activity.get('sources') or [])
+    ):
+        logger.info(f"[PERF] Activity {activity_id} is MANUAL — excluded from leaderboard/records")
+        mark_activity_calculated(activity_id)
+        return
+
     swim_peaks = (activity.get('peaks') or {}).get('swim') or {}
     if not swim_peaks:
         logger.info(f"[PERF] Activity {activity_id} has no swim peaks — skipping")
