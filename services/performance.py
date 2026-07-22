@@ -48,6 +48,35 @@ def evaluate_performance(activity, distance_m, peak):
     return 'B'
 
 
+def _compute_swimbox_points(activity):
+    """Swimbox Points (zones #486): thread the full athlete context into the
+    stub calculator NOW so the real algorithm needs no caller changes.
+    Returns None on any failure (points simply not stored this pass)."""
+    try:
+        from services.swimbox_points import calculate_swimbox_points
+        from services.athlete import fetch_athlete
+        context = {'hr_zones': None, 'max_hr': None, 'resting_hr': None,
+                   'critical_speed': None}
+        athlete = fetch_athlete(activity.get('user_id')) if activity.get('user_id') else None
+        if athlete:
+            for sp in (athlete.get('sport_profiles') or []):
+                if sp.get('sport_type') == 'SWIMMING':
+                    profile = sp.get('profile') or {}
+                    context.update({
+                        'hr_zones': profile.get('hr_zones'),
+                        'max_hr': profile.get('max_hr'),
+                        'resting_hr': profile.get('resting_hr'),
+                        'critical_speed': profile.get('continuous_pace_for_15'),
+                    })
+                    break
+        points = calculate_swimbox_points(activity, context)
+        logger.info(f"[POINTS] Activity {activity.get('id')} -> {points} swimbox points")
+        return points
+    except Exception as e:
+        logger.warning(f"[POINTS] calculation failed for {activity.get('id')}: {e}")
+        return None
+
+
 def save_performances(activity):
     """
     Full performance processing pipeline for a single activity.
@@ -69,6 +98,15 @@ def save_performances(activity):
         mark_activity_calculated(activity_id)
         return
 
+    # Swimbox Points (zones #486 §7): EVERY swimming activity — including
+    # manual and peak-less ones — gets a points value (the sport gate above
+    # is the only gate; the calculator is a stub for now). Recomputed on
+    # every pass, so activity updates overwrite the stored value (§7.2).
+    points_extra = {}
+    points = _compute_swimbox_points(activity)
+    if points is not None:
+        points_extra['swimbox_points'] = points
+
     # Gate: MANUAL activities never concur for performances — neither pool
     # leaderboard nor personal records. Their laps can be user-typed or
     # LLM-generated, not device-recorded; excluded by design for any reason.
@@ -77,13 +115,13 @@ def save_performances(activity):
         for src in (activity.get('sources') or [])
     ):
         logger.info(f"[PERF] Activity {activity_id} is MANUAL — excluded from leaderboard/records")
-        mark_activity_calculated(activity_id)
+        mark_activity_calculated(activity_id, extra=points_extra)
         return
 
     swim_peaks = (activity.get('peaks') or {}).get('swim') or {}
     if not swim_peaks:
         logger.info(f"[PERF] Activity {activity_id} has no swim peaks — skipping")
-        mark_activity_calculated(activity_id)
+        mark_activity_calculated(activity_id, extra=points_extra)
         return
 
     pool_id = activity.get('pool_id')
@@ -159,7 +197,7 @@ def save_performances(activity):
                                   notify=_activity_is_recent(activity))
 
     _ensure_indexes(collection)
-    mark_activity_calculated(activity_id)
+    mark_activity_calculated(activity_id, extra=points_extra)
 
 
 def _process_personal_records(user_id, candidates, notify=True):
@@ -200,8 +238,10 @@ def _process_personal_records(user_id, candidates, notify=True):
                         f'without push (old/backfill activity — Card 475)')
 
 
-def mark_activity_calculated(activity_id):
+def mark_activity_calculated(activity_id, extra=None):
     """PATCH swimboxapis to set performance_calculated=True on the activity.
+    `extra` merges additional fields into the same PATCH (e.g.
+    swimbox_points — zones #486) so the write stays a single request.
 
     swimboxapis rate-limits by caller, and a backlog drain can briefly exceed
     it (all our calls share one service token). A 429 only fails the *mark* —
@@ -220,7 +260,7 @@ def mark_activity_calculated(activity_id):
         try:
             response = requests.patch(
                 f'{url}/activities/{activity_id}',
-                json={'performance_calculated': True},
+                json={'performance_calculated': True, **(extra or {})},
                 headers={'Authorization': f'Bearer {token}'},
                 timeout=5
             )
