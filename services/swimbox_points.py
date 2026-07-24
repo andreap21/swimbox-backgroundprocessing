@@ -491,6 +491,19 @@ def _pace_engine(activity, critical_speed):
     if critical_speed <= 0:
         return None
     laps = activity.get('laps') or []
+    if not laps:
+        # Manual swims carry only totals (no laps, no HR): treat the whole
+        # swim as ONE continuous effort at average pace — the same result
+        # the engine produces for a single-lap device recording. Skipped
+        # when the implied pace is implausible for swimming (same 45s-6'00
+        # per-100m band the manual-activity sanitizer uses).
+        duration = activity.get('duration') or 0
+        distance = activity.get('distance') or 0
+        if duration > 0 and distance > 0:
+            pace_100 = duration / (distance / 100.0)
+            if 45 <= pace_100 <= 360:
+                laps = [{'index': 0, 'distance': float(distance),
+                         'moving_time': duration, 'elapsed_time': duration}]
     table = reference_paces(critical_speed)
     segments = _segments_from_laps(laps, table)
     if not any(s['kind'] == 'work' for s in segments):

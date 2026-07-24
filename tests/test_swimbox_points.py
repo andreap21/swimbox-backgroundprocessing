@@ -243,6 +243,17 @@ check('run with HR scores via hr engine', result is not None and result['method'
 run_laps_only = {**sprint_set(30), 'sport_type': 'Run'}
 check('run without HR never uses pace engine',
       calculate_swimbox_points(run_laps_only, {**CTX_HRR, 'critical_speed': 90}) is None)
+# Manual swims: totals only (no laps, no HR) → synthesized single
+# continuous effort at average pace through the pace engine.
+manual_swim = {'type': 'swim', 'is_manual': True, 'duration': 3420, 'distance': 3800}
+result = calculate_swimbox_points(manual_swim, {**CTX_HRR, 'critical_speed': 90})
+check('manual swim scores via pace engine',
+      result is not None and result['method'] == 'pace_estimate' and result['points'] > 0)
+check('manual swim has zone breakdown',
+      abs(sum(result['zone_minutes'].values()) - 57.0) < 0.2)
+check('manual swim implausible pace -> None',
+      calculate_swimbox_points({'type': 'swim', 'duration': 60, 'distance': 3800},
+                               {**CTX_HRR, 'critical_speed': 90}) is None)
 # Neither engine → None.
 check('nothing -> None',
       calculate_swimbox_points({'duration': 3600},
