@@ -258,6 +258,37 @@ for ppm, expected in [(0.9, (1, 'Recupero')), (1.59, (1, 'Recupero')),
 result = calculate_swimbox_points(sprint_set(30), {**CTX_HRR, 'critical_speed': 90})
 check('band in result', result['intensity_band'] == 5 and result['intensity_label'] == 'Massimale'
       if result['points_per_minute'] > 3.10 else 'intensity_band' in result)
+# Flat-rate estimates for non-swims without usable HR (run pace / ride
+# power / LLM on ride speed). LLM helper monkeypatched — no network.
+import services.swimbox_points as sp
+NO_CTX = {'hr_zones': None, 'max_hr': None, 'resting_hr': None, 'critical_speed': None}
+run_10k_50min = {'sport_type': 'Run', 'duration': 3000, 'distance': 10000}  # 5'00"/km
+result = calculate_swimbox_points(run_10k_50min, NO_CTX)
+check('run flat pace band', result is not None and result['points_per_minute'] == 2.0
+      and result['method'] == 'pace_estimate' and result['points'] == 100)
+check('run flat no zone_minutes', result['zone_minutes'] is None)
+fast_run = {'sport_type': 'Run', 'duration': 1800, 'distance': 10000}  # 3'00"/km → elite
+check('run elite band', calculate_swimbox_points(fast_run, NO_CTX)['points_per_minute'] == 3.1)
+check('run junk pace -> None',
+      calculate_swimbox_points({'sport_type': 'Run', 'duration': 60, 'distance': 10000}, NO_CTX) is None)
+ride_power = {'sport_type': 'Ride', 'duration': 3600,
+              'heart_rate_stream': {'watts': [220] * 100}}
+result = calculate_swimbox_points(ride_power, NO_CTX)
+check('ride power band', result['points_per_minute'] == 2.5 and result['method'] == 'power_estimate')
+check('ride power points', result['points'] == 150)
+_orig_llm = sp._llm_ride_ppm
+sp._llm_ride_ppm = lambda kmh, mins: 2.5
+ride_speed = {'sport_type': 'Ride', 'duration': 3600, 'distance': 30000}
+result = calculate_swimbox_points(ride_speed, NO_CTX)
+check('ride llm band', result['points_per_minute'] == 2.5 and result['method'] == 'llm_estimate')
+sp._llm_ride_ppm = lambda kmh, mins: None
+check('ride llm unavailable -> None', calculate_swimbox_points(ride_speed, NO_CTX) is None)
+sp._llm_ride_ppm = _orig_llm
+check('no-key llm -> None (no ANTHROPIC_API_KEY in test env)'
+      if not __import__('os').getenv('ANTHROPIC_API_KEY') else 'llm key present (skip)',
+      True if __import__('os').getenv('ANTHROPIC_API_KEY') else sp._llm_ride_ppm(25.0, 60.0) is None)
+check('walk still None',
+      calculate_swimbox_points({'sport_type': 'Walk', 'duration': 3600, 'distance': 5000}, NO_CTX) is None)
 # Determinism (stub contract §7.2).
 a, b = (calculate_swimbox_points(sprint_set(30), {**CTX_HRR, 'critical_speed': 90})
         for _ in range(2))

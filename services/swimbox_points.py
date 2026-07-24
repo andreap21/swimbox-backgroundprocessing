@@ -10,10 +10,18 @@ zone weighting, summed. Two engines, selected binary (§4.1):
 ALL sports are scored since 2026-07-24 (gate lifted, deviation from spec
 §9.12): the HR engine is sport-agnostic. The pace engine stays SWIM-ONLY —
 the Ritmi table is derived from swimming critical speed and means nothing
-for run/ride laps — so a non-swim without usable HR gets no points.
-Known caveat: non-swim scoring uses the SWIMMING profile's HR zones
-(running zones sit a few bpm higher, so run intensity is slightly
-overstated until per-sport zones exist).
+for run/ride laps. Known caveat: non-swim scoring uses the SWIMMING
+profile's HR zones (running zones sit a few bpm higher, so run intensity
+is slightly overstated until per-sport zones exist).
+
+Non-swims WITHOUT usable HR get a FLAT-RATE estimate (no zone breakdown,
+zone_minutes omitted): running from average pace, cycling from average
+power (watts stream), and cycling without power from a minimal Haiku call
+on the averages only (avg speed + duration — never the streams). Flat
+estimates: points = pts/min band × elapsed minutes. The LLM path is
+best-effort: constrained to the same five band values to keep recomputes
+stable, and skipped entirely (no points) when ANTHROPIC_API_KEY is unset
+or the call fails.
 
 Deterministic for a given activity + athlete
 state — points are recomputed and overwritten on every activity update, and
@@ -40,6 +48,7 @@ Garmin FIT — no correction applied (§3 uses it as the elapsed span).
 
 import logging
 import math
+import os
 
 from services.ritmi import reference_paces, DISTANCES as RITMI_DISTANCES
 
@@ -91,6 +100,142 @@ def classify_intensity(points_per_minute):
     if band == 5 and points_per_minute <= INTENSITY_THRESHOLDS[-1]:
         band = 4  # exactly 3.10 stays Intensa (top band is strictly above)
     return band, INTENSITY_LABELS[band - 1]
+
+
+# ── Flat-rate estimates for non-swims without usable HR (2026-07-24) ─────────
+# ⚠️ PLACEHOLDER bands (Andrea's tables) — coaching-tunable like everything
+# above. Each row: (upper bound EXCLUSIVE, pts/min). "Typical amateur"
+# anchoring; ELITE = 3.1.
+RUN_PACE_PPM = [          # average pace, minutes per km
+    (3.5, 3.1),           # faster than 3'30"/km → elite
+    (4.0, 3.0),
+    (5.0, 2.5),
+    (6.0, 2.0),
+    (None, 1.6),          # 6'00"/km and slower
+]
+RIDE_POWER_PPM = [        # average watts (from the activity's watts stream)
+    (150, 1.6),
+    (200, 2.0),
+    (250, 2.5),
+    (300, 3.0),
+    (None, 3.1),          # 300W+ → elite
+]
+FLAT_PPM_VALUES = [1.6, 2.0, 2.5, 3.0, 3.1]
+# Plausibility guards — outside these, the averages are junk data.
+_RUN_PACE_PLAUSIBLE = (2.0, 20.0)    # min/km
+_RIDE_SPEED_PLAUSIBLE = (5.0, 60.0)  # km/h
+_MIN_WATTS_SAMPLES = 50
+LLM_ESTIMATE_MODEL = 'claude-haiku-4-5'
+
+
+def _band_lookup(value, table):
+    for upper, ppm in table:
+        if upper is None or value < upper:
+            return ppm
+    return table[-1][1]
+
+
+def _average_watts(activity):
+    """Mean of the non-None watts stream samples, or None when the stream
+    is absent/too thin to trust."""
+    watts = (activity.get('heart_rate_stream') or {}).get('watts') or []
+    samples = [w for w in watts if isinstance(w, (int, float)) and not isinstance(w, bool)]
+    if len(samples) < _MIN_WATTS_SAMPLES:
+        return None
+    mean = sum(samples) / len(samples)
+    return mean if mean >= 30 else None  # near-zero mean = sensor junk
+
+
+def _llm_ride_ppm(avg_kmh, duration_min):
+    """Haiku estimate for a ride with no HR and no power — ONLY the two
+    averages are sent, never streams, to keep the call minimal. The answer
+    is constrained to the five flat-rate band values so repeated recomputes
+    stay stable. Returns a ppm float or None (no key / failure)."""
+    if not os.getenv('ANTHROPIC_API_KEY'):
+        return None
+    try:
+        import json
+        import anthropic
+        client = anthropic.Anthropic(timeout=15.0, max_retries=1)
+        response = client.messages.create(
+            model=LLM_ESTIMATE_MODEL,
+            max_tokens=256,
+            output_config={'format': {'type': 'json_schema', 'schema': {
+                'type': 'object',
+                'properties': {'points_per_minute': {
+                    'type': 'number', 'enum': FLAT_PPM_VALUES}},
+                'required': ['points_per_minute'],
+                'additionalProperties': False,
+            }}},
+            messages=[{'role': 'user', 'content': (
+                f"A cyclist rode for {duration_min:.0f} minutes at an average of "
+                f"{avg_kmh:.1f} km/h. No heart-rate or power data is available. "
+                "Classify the training intensity for a TYPICAL AMATEUR cyclist "
+                "into one band: 1.6 = recovery (roughly under 18 km/h solo), "
+                "2.0 = light endurance (~18-23 km/h), 2.5 = moderate aerobic "
+                "(~23-28 km/h), 3.0 = intense (~28-33 km/h), 3.1 = maximal / "
+                "race pace (above ~33 km/h). Adjust for duration: sustaining a "
+                "high average for hours is harder than for 30 minutes, and very "
+                "long easy rides stay easy. Answer with exactly one band value."
+            )}],
+        )
+        text = next(b.text for b in response.content if b.type == 'text')
+        ppm = float(json.loads(text)['points_per_minute'])
+        return ppm if ppm in FLAT_PPM_VALUES else None
+    except Exception as e:  # noqa: BLE001 — points simply not stored
+        logger.warning('[POINTS] llm ride estimate failed: %s', e)
+        return None
+
+
+def _flat_estimate(activity):
+    """(ppm, method) for a non-swim without usable HR, or None.
+
+    Running → pace table. Cycling → power table when a watts stream
+    exists, else the Haiku speed estimate. Other sports → None."""
+    sport = (activity.get('sport_type') or activity.get('type') or '').lower()
+    duration = activity.get('duration') or 0
+    distance = activity.get('distance') or 0
+    if duration <= 0:
+        return None
+
+    if 'run' in sport:
+        if distance <= 0:
+            return None
+        pace_min_km = (duration / 60.0) / (distance / 1000.0)
+        if not (_RUN_PACE_PLAUSIBLE[0] <= pace_min_km <= _RUN_PACE_PLAUSIBLE[1]):
+            return None
+        return _band_lookup(pace_min_km, RUN_PACE_PPM), 'pace_estimate'
+
+    if 'ride' in sport or 'bike' in sport or 'cycl' in sport:
+        avg_watts = _average_watts(activity)
+        if avg_watts is not None:
+            return _band_lookup(avg_watts, RIDE_POWER_PPM), 'power_estimate'
+        if distance <= 0:
+            return None
+        avg_kmh = (distance / 1000.0) / (duration / 3600.0)
+        if not (_RIDE_SPEED_PLAUSIBLE[0] <= avg_kmh <= _RIDE_SPEED_PLAUSIBLE[1]):
+            return None
+        ppm = _llm_ride_ppm(avg_kmh, duration / 60.0)
+        if ppm is not None:
+            return ppm, 'llm_estimate'
+    return None
+
+
+def _assemble_flat(ppm, duration_seconds, method):
+    """Result dict for a flat-rate estimate — no zone distribution
+    (zone_minutes None → omitted from the stored detail)."""
+    minutes = duration_seconds / 60.0
+    points = ppm * minutes
+    band, label = classify_intensity(ppm)
+    return {
+        'points': _round_half_away(points),
+        'points_per_minute': ppm,
+        'intensity_band': band,
+        'intensity_label': label,
+        'method': method,
+        'zone_minutes': None,
+        'algo_version': ALGO_VERSION,
+    }
 
 _C_ZONES = {'C1', 'C2', 'C3'}
 SWIM_SPORT_TYPES = {'Swim', 'swim', 'SWIM'}  # single source; performance.py imports it
@@ -413,11 +558,18 @@ def calculate_swimbox_points(activity, athlete_context):
 
     # Pace engine is SWIM-ONLY: the Ritmi table comes from swimming
     # critical speed — classifying run/ride laps against it would be
-    # nonsense, so non-swims without usable HR simply score nothing.
+    # nonsense. Non-swims without usable HR fall to the flat-rate
+    # estimators (run pace / ride power / Haiku on ride speed).
     sport_type = activity.get('sport_type') or activity.get('type') or ''
     if sport_type in SWIM_SPORT_TYPES:
         pace_result = _pace_engine(activity, context.get('critical_speed'))
         if pace_result is not None:
             return _assemble(*pace_result, coefficients or STAGNO_COEFFICIENTS,
                              'pace_estimate')
+        return None
+
+    flat = _flat_estimate(activity)
+    if flat is not None:
+        ppm, method = flat
+        return _assemble_flat(ppm, activity.get('duration') or 0, method)
     return None

@@ -122,10 +122,13 @@ def save_performances(activity):
             'intensity_band': points_result['intensity_band'],
             'intensity_label': points_result['intensity_label'],
             'method': points_result['method'],
-            'zone_minutes': points_result['zone_minutes'],
             'algo_version': points_result['algo_version'],
             'computed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         }
+        # Flat-rate estimates carry no zone breakdown — omit the key so the
+        # web sheet hides the bars instead of drawing five empty ones.
+        if points_result['zone_minutes'] is not None:
+            points_extra['swimbox_points_detail']['zone_minutes'] = points_result['zone_minutes']
 
     # Gate: leaderboard + personal records remain swimming-only.
     if sport_type not in SWIM_SPORT_TYPES:
