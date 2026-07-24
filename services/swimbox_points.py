@@ -70,6 +70,21 @@ DENSITY_LOW = 0.33              # §5.4: below → reps independent (rep duratio
 DENSITY_HIGH = 0.66             # §5.4: above → set is one continuous effort
 REST_GAP_MIN_S = 5              # in-lap elapsed−moving gap counted as rest (noise floor)
 
+# ── Intensity bands (pts/min → session character, defined 2026-07-24) ────────
+# Lower bound inclusive: band n covers [threshold(n-1), threshold(n)); the
+# top band is strictly above the last threshold (3.10 itself is Intensa).
+# ⚠️ Boundaries are coaching-tunable like the constants above.
+INTENSITY_THRESHOLDS = [1.60, 2.10, 2.60, 3.10]
+INTENSITY_LABELS = ['Recupero', 'Leggera', 'Media', 'Intensa', 'Massimale']
+
+
+def classify_intensity(points_per_minute):
+    """(band 1-5, label) for a points-per-minute value."""
+    band = 1 + sum(1 for t in INTENSITY_THRESHOLDS if points_per_minute >= t)
+    if band == 5 and points_per_minute <= INTENSITY_THRESHOLDS[-1]:
+        band = 4  # exactly 3.10 stays Intensa (top band is strictly above)
+    return band, INTENSITY_LABELS[band - 1]
+
 _C_ZONES = {'C1', 'C2', 'C3'}
 
 
@@ -362,9 +377,13 @@ def _assemble(zone_seconds, total_seconds, coefficients, method):
     if total_seconds <= 0:
         return None
     points = sum((zone_seconds[z] / 60.0) * coefficients[z - 1] for z in range(1, 6))
+    ppm = round(points / (total_seconds / 60.0), 2)
+    band, label = classify_intensity(ppm)  # from the rounded (displayed) value
     return {
         'points': _round_half_away(points),
-        'points_per_minute': round(points / (total_seconds / 60.0), 2),
+        'points_per_minute': ppm,
+        'intensity_band': band,
+        'intensity_label': label,
         'method': method,
         'zone_minutes': {f'z{z}': round(zone_seconds[z] / 60.0, 1) for z in range(1, 6)},
         'algo_version': ALGO_VERSION,

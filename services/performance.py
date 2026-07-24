@@ -123,6 +123,8 @@ def save_performances(activity):
         points_extra['swimbox_points'] = points_result['points']
         points_extra['swimbox_points_detail'] = {
             'points_per_minute': points_result['points_per_minute'],
+            'intensity_band': points_result['intensity_band'],
+            'intensity_label': points_result['intensity_label'],
             'method': points_result['method'],
             'zone_minutes': points_result['zone_minutes'],
             'algo_version': points_result['algo_version'],

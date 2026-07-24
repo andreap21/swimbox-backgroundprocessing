@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.ritmi import reference_paces
 from services.swimbox_points import (
     calculate_swimbox_points,
+    classify_intensity,
     has_hr_signal,
     zone_coefficients,
     _assemble,
@@ -238,6 +239,16 @@ check('nothing -> None',
       calculate_swimbox_points({'duration': 3600},
                                {'hr_zones': None, 'max_hr': None,
                                 'resting_hr': None, 'critical_speed': None}) is None)
+# Intensity bands (pts/min classification, boundaries lower-inclusive,
+# 3.10 itself stays Intensa).
+for ppm, expected in [(0.9, (1, 'Recupero')), (1.59, (1, 'Recupero')),
+                      (1.60, (2, 'Leggera')), (2.10, (3, 'Media')),
+                      (2.59, (3, 'Media')), (2.60, (4, 'Intensa')),
+                      (3.10, (4, 'Intensa')), (3.11, (5, 'Massimale'))]:
+    check(f'band {ppm}', classify_intensity(ppm) == expected)
+result = calculate_swimbox_points(sprint_set(30), {**CTX_HRR, 'critical_speed': 90})
+check('band in result', result['intensity_band'] == 5 and result['intensity_label'] == 'Massimale'
+      if result['points_per_minute'] > 3.10 else 'intensity_band' in result)
 # Determinism (stub contract §7.2).
 a, b = (calculate_swimbox_points(sprint_set(30), {**CTX_HRR, 'critical_speed': 90})
         for _ in range(2))
