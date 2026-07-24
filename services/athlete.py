@@ -51,6 +51,27 @@ def fetch_athlete(user_id):
         return None
 
 
+def fetch_hr_zones(athlete_id):
+    """GET /athletes/<athlete_id>/hr-zones (admin route, Trello #490).
+
+    Triggers swimboxapis' lazy zone derivation (get_zones_for_athlete):
+    an athlete with a DOB but no stored container gets one derived and
+    persisted server-side. Returns {'hr_zones', 'max_hr', 'resting_hr',
+    'date_of_birth'} or None — callers degrade to the pace engine."""
+    try:
+        resp = requests.get(
+            f'{_base_url()}/athletes/{athlete_id}/hr-zones',
+            headers=_headers(),
+            timeout=5
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+        return payload if isinstance(payload, dict) else None
+    except Exception as e:
+        logger.warning(f'[POINTS] Failed to fetch hr-zones for athlete {athlete_id}: {e}')
+        return None
+
+
 def get_peak_performances(athlete):
     """Extract peak_performances dict from SWIMMING sport profile. Returns {} if missing."""
     for sp in (athlete.get('sport_profiles') or []):

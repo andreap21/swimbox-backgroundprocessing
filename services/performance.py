@@ -49,12 +49,13 @@ def evaluate_performance(activity, distance_m, peak):
 
 
 def _compute_swimbox_points(activity):
-    """Swimbox Points (zones #486): thread the full athlete context into the
-    stub calculator NOW so the real algorithm needs no caller changes.
-    Returns None on any failure (points simply not stored this pass)."""
+    """Swimbox Points (#486 stub → #490 real calculator). Builds the athlete
+    context and runs calculate_swimbox_points. Returns the result dict
+    ({points, points_per_minute, method, zone_minutes, algo_version}) or
+    None on any failure (points simply not stored this pass)."""
     try:
-        from services.swimbox_points import calculate_swimbox_points
-        from services.athlete import fetch_athlete
+        from services.swimbox_points import calculate_swimbox_points, has_hr_signal
+        from services.athlete import fetch_athlete, fetch_hr_zones
         context = {'hr_zones': None, 'max_hr': None, 'resting_hr': None,
                    'critical_speed': None}
         athlete = fetch_athlete(activity.get('user_id')) if activity.get('user_id') else None
@@ -69,9 +70,21 @@ def _compute_swimbox_points(activity):
                         'critical_speed': profile.get('continuous_pace_for_15'),
                     })
                     break
-        points = calculate_swimbox_points(activity, context)
-        logger.info(f"[POINTS] Activity {activity.get('id')} -> {points} swimbox points")
-        return points
+            # Stored hr_zones may be None — lazy derivation lives in
+            # swimboxapis (get_zones_for_athlete). Only worth the extra
+            # request when the HR engine could actually use the zones.
+            if context['hr_zones'] is None and has_hr_signal(activity):
+                zones_payload = fetch_hr_zones(athlete.get('id')) or {}
+                context['hr_zones'] = zones_payload.get('hr_zones')
+                context['max_hr'] = context['max_hr'] or zones_payload.get('max_hr')
+                context['resting_hr'] = context['resting_hr'] or zones_payload.get('resting_hr')
+        result = calculate_swimbox_points(activity, context)
+        if result is None:
+            logger.info(f"[POINTS] Activity {activity.get('id')} -> no points (no engine applicable)")
+        else:
+            logger.info(f"[POINTS] Activity {activity.get('id')} -> {result['points']} swimbox points "
+                        f"({result['method']}, {result['points_per_minute']} pts/min)")
+        return result
     except Exception as e:
         logger.warning(f"[POINTS] calculation failed for {activity.get('id')}: {e}")
         return None
@@ -98,14 +111,23 @@ def save_performances(activity):
         mark_activity_calculated(activity_id)
         return
 
-    # Swimbox Points (zones #486 §7): EVERY swimming activity — including
-    # manual and peak-less ones — gets a points value (the sport gate above
-    # is the only gate; the calculator is a stub for now). Recomputed on
-    # every pass, so activity updates overwrite the stored value (§7.2).
+    # Swimbox Points (#490): EVERY swimming activity — including manual and
+    # peak-less ones — goes through the calculator (the sport gate above is
+    # the only gate); activities where neither engine applies (no HR, no
+    # critical speed/laps) store nothing and the web chip stays hidden.
+    # Recomputed on every pass, so activity updates overwrite the stored
+    # value deterministically (#486 §7.2).
     points_extra = {}
-    points = _compute_swimbox_points(activity)
-    if points is not None:
-        points_extra['swimbox_points'] = points
+    points_result = _compute_swimbox_points(activity)
+    if points_result is not None:
+        points_extra['swimbox_points'] = points_result['points']
+        points_extra['swimbox_points_detail'] = {
+            'points_per_minute': points_result['points_per_minute'],
+            'method': points_result['method'],
+            'zone_minutes': points_result['zone_minutes'],
+            'algo_version': points_result['algo_version'],
+            'computed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        }
 
     # Gate: MANUAL activities never concur for performances — neither pool
     # leaderboard nor personal records. Their laps can be user-typed or
