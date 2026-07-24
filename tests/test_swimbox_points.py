@@ -152,7 +152,7 @@ print('pace engine')
 
 def sprint_set(send_off, n=16):
     """16×25m, ~16s swim (C3 realised pace at cs=90) on a send-off."""
-    return {'duration': n * send_off,
+    return {'type': 'swim', 'duration': n * send_off,
             'laps': [{'index': i, 'distance': 25.0, 'moving_time': 16,
                       'elapsed_time': send_off} for i in range(n)]}
 
@@ -234,6 +234,15 @@ check('junk avg falls to pace engine', result is not None and result['method'] =
 check('junk avg no laps -> None',
       calculate_swimbox_points({'duration': 600, 'heart_rate_stream':
                                 {'average_heartrate': 91}}, CTX_HRR) is None)
+# Non-swim (gate lifted 2026-07-24): HR engine scores any sport; the pace
+# engine must NEVER fire for non-swims (swim Ritmi ≠ run/ride paces).
+run_hr = {'sport_type': 'Run', 'duration': 360,
+          'heart_rate_stream': {'time': [0, 180, 360], 'heartrate': [140, 150, 145]}}
+result = calculate_swimbox_points(run_hr, {**CTX_HRR, 'critical_speed': 90})
+check('run with HR scores via hr engine', result is not None and result['method'] == 'hr')
+run_laps_only = {**sprint_set(30), 'sport_type': 'Run'}
+check('run without HR never uses pace engine',
+      calculate_swimbox_points(run_laps_only, {**CTX_HRR, 'critical_speed': 90}) is None)
 # Neither engine → None.
 check('nothing -> None',
       calculate_swimbox_points({'duration': 3600},

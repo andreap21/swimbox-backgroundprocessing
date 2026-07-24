@@ -1,14 +1,21 @@
 """Swimbox Points calculator (Trello #490, SwimboxPoints.md v1.1).
 
-TRIMP-like internal training load for one swimming activity: time per HR
-zone x zone weighting, summed. Two engines, selected binary (§4.1):
+TRIMP-like internal training load for one activity: time per HR zone x
+zone weighting, summed. Two engines, selected binary (§4.1):
 
     activity has a usable HR signal AND zones available -> HR engine (§3)
-    otherwise, critical speed AND laps present         -> pace engine (§4-5)
-    otherwise                                          -> None (no points)
+    otherwise, SWIM with critical speed AND laps        -> pace engine (§4-5)
+    otherwise                                           -> None (no points)
 
-The sport-type gate (swimming only) lives in the CALLING path
-(services/performance.py). Deterministic for a given activity + athlete
+ALL sports are scored since 2026-07-24 (gate lifted, deviation from spec
+§9.12): the HR engine is sport-agnostic. The pace engine stays SWIM-ONLY —
+the Ritmi table is derived from swimming critical speed and means nothing
+for run/ride laps — so a non-swim without usable HR gets no points.
+Known caveat: non-swim scoring uses the SWIMMING profile's HR zones
+(running zones sit a few bpm higher, so run intensity is slightly
+overstated until per-sport zones exist).
+
+Deterministic for a given activity + athlete
 state — points are recomputed and overwritten on every activity update, and
 zone/CS edits affect only future calculations (past is past, no backfill).
 
@@ -86,6 +93,7 @@ def classify_intensity(points_per_minute):
     return band, INTENSITY_LABELS[band - 1]
 
 _C_ZONES = {'C1', 'C2', 'C3'}
+SWIM_SPORT_TYPES = {'Swim', 'swim', 'SWIM'}  # single source; performance.py imports it
 
 
 def _round_half_away(x):
@@ -391,7 +399,7 @@ def _assemble(zone_seconds, total_seconds, coefficients, method):
 
 
 def calculate_swimbox_points(activity, athlete_context):
-    """Swimbox Points for one swimming activity — dict (see module
+    """Swimbox Points for one activity (any sport) — dict (see module
     docstring) or None when neither engine can run."""
     context = athlete_context or {}
     hr_zones = context.get('hr_zones')
@@ -403,8 +411,13 @@ def calculate_swimbox_points(activity, athlete_context):
         if hr_result is not None:
             return _assemble(*hr_result, coefficients, 'hr')
 
-    pace_result = _pace_engine(activity, context.get('critical_speed'))
-    if pace_result is not None:
-        return _assemble(*pace_result, coefficients or STAGNO_COEFFICIENTS,
-                         'pace_estimate')
+    # Pace engine is SWIM-ONLY: the Ritmi table comes from swimming
+    # critical speed — classifying run/ride laps against it would be
+    # nonsense, so non-swims without usable HR simply score nothing.
+    sport_type = activity.get('sport_type') or activity.get('type') or ''
+    if sport_type in SWIM_SPORT_TYPES:
+        pace_result = _pace_engine(activity, context.get('critical_speed'))
+        if pace_result is not None:
+            return _assemble(*pace_result, coefficients or STAGNO_COEFFICIENTS,
+                             'pace_estimate')
     return None

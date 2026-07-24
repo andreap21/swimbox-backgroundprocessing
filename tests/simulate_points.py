@@ -67,11 +67,10 @@ for i, act in enumerate(activities):
                f"{result['method']:<13} {zm}")
     else:
         sim = f"{'—':>4} {'—':>5} {'no engine':<13}"
-    gate = '' if is_swim else '  [non-swim: GATED today]'
     print(f"{str(act.get('starting_date') or '')[:10]:<11} {sport:<8} "
           f"{act.get('duration') or 0:>6} {act.get('distance') or 0:>6.0f} "
           f"{n_hr:>5} {len(act.get('laps') or []):>4} "
-          f"{str(act.get('swimbox_points')):>6} | {sim}{gate}")
+          f"{str(act.get('swimbox_points')):>6} | {sim}")
 
 print('\nSummary (sport bucket, engine):')
 for (bucket, method), n in sorted(summary.items()):

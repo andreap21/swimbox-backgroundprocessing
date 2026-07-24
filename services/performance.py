@@ -10,9 +10,10 @@ from services.mongodb import get_db
 
 logger = logging.getLogger(__name__)
 
+from services.swimbox_points import SWIM_SPORT_TYPES
+
 VALID_DISTANCES = {100, 200, 400, 1000, 1500, 1800, 2000, 3800, 5000, 10000}
 PERFORMANCES_COLLECTION = 'performances'
-SWIM_SPORT_TYPES = {'Swim', 'swim', 'SWIM'}
 PERSONAL_RECORD_GRADES = {'A', 'B', 'C', 'D'}  # E is excluded from both leaderboard and personal records
 
 # Card 475: on first connect, Strava's 6-month backfill and Garmin's historical
@@ -103,20 +104,15 @@ def save_performances(activity):
     5. Activity marked as performance_calculated=True via swimboxapis in all cases.
     """
     activity_id = activity.get('id')
-
-    # Gate: only swimming activities
     sport_type = activity.get('sport_type') or activity.get('type') or ''
-    if sport_type not in SWIM_SPORT_TYPES:
-        logger.info(f"[PERF] Activity {activity_id} sport_type={sport_type!r} — not a swim, skipping")
-        mark_activity_calculated(activity_id)
-        return
 
-    # Swimbox Points (#490): EVERY swimming activity — including manual and
-    # peak-less ones — goes through the calculator (the sport gate above is
-    # the only gate); activities where neither engine applies (no HR, no
-    # critical speed/laps) store nothing and the web chip stays hidden.
-    # Recomputed on every pass, so activity updates overwrite the stored
-    # value deterministically (#486 §7.2).
+    # Swimbox Points (#490): EVERY activity of ANY sport goes through the
+    # calculator (sport gate lifted 2026-07-24 — the HR engine is
+    # sport-agnostic; the swim-only pace engine is enforced inside the
+    # calculator). Activities where neither engine applies (non-swim
+    # without usable HR, swim without HR and without CS/laps) store nothing
+    # and the web badge stays hidden. Recomputed on every pass, so activity
+    # updates overwrite the stored value deterministically (#486 §7.2).
     points_extra = {}
     points_result = _compute_swimbox_points(activity)
     if points_result is not None:
@@ -130,6 +126,12 @@ def save_performances(activity):
             'algo_version': points_result['algo_version'],
             'computed_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         }
+
+    # Gate: leaderboard + personal records remain swimming-only.
+    if sport_type not in SWIM_SPORT_TYPES:
+        logger.info(f"[PERF] Activity {activity_id} sport_type={sport_type!r} — not a swim, points only")
+        mark_activity_calculated(activity_id, extra=points_extra)
+        return
 
     # Gate: MANUAL activities never concur for performances — neither pool
     # leaderboard nor personal records. Their laps can be user-typed or
