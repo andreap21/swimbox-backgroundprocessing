@@ -167,6 +167,7 @@ def save_performances(activity):
     db = get_db()
     collection = db[PERFORMANCES_COLLECTION]
     personal_record_candidates = {}  # dist_str -> candidate dict
+    inserted_entries = []            # rows actually written this pass
 
     for dist_str, peak in swim_peaks.items():
         try:
@@ -204,6 +205,7 @@ def save_performances(activity):
                 }
                 collection.insert_one(doc)
                 doc.pop('_id', None)
+                inserted_entries.append({'distance_m': distance_m, 'grade': grade})
                 logger.info(f"[LEADERBOARD] Saved performance {doc['id']} pool={pool_id} dist={distance_m}m grade={grade}")
             else:
                 logger.info(f"[LEADERBOARD] Performance already exists for activity {activity_id} dist={distance_m}m — skipping")
@@ -224,6 +226,10 @@ def save_performances(activity):
     if personal_record_candidates and user_id:
         _process_personal_records(user_id, personal_record_candidates,
                                   notify=_activity_is_recent(activity))
+
+    if inserted_entries:
+        notify_leaderboard_entries(user_id, activity.get('pool_name', ''),
+                                   inserted_entries)
 
     _ensure_indexes(collection)
     mark_activity_calculated(activity_id, extra=points_extra)
@@ -265,6 +271,40 @@ def _process_personal_records(user_id, candidates, notify=True):
         else:
             logger.info(f'[PERSONAL] {len(records_to_save)} record(s) saved for {user_id} '
                         f'without push (old/backfill activity — Card 475)')
+
+
+def notify_leaderboard_entries(user_id, pool_name, entries):
+    """Tell the monitoring bot that leaderboard rows were generated.
+
+    One event per ACTIVITY (not per row): an activity can place on several
+    distances at once and per-row messages would read as spam. Emitted via
+    swimboxapis POST /ops-events -- the framework's documented path for
+    external backends -- so the Telegram line matches every other ops event.
+
+    Fire-and-forget like run_match_for_activity: failures are logged and
+    swallowed, monitoring must never fail the pipeline.
+    """
+    url = os.getenv('SWIMBOXAPIS_URL', '')
+    token = os.getenv('SWIMBOXAPIS_CLIENT_TOKEN', '')
+    if not url or not token:
+        logger.warning('[LEADERBOARD] SWIMBOXAPIS_URL or SWIMBOXAPIS_CLIENT_TOKEN not set — skipping ops event')
+        return
+    try:
+        resp = requests.post(
+            f'{url}/ops-events',
+            json={'action': 'leaderboard_entry',
+                  'user_id': user_id,
+                  'meta': {'pool': pool_name or '?',
+                           'entries': ' '.join(f"{e['distance_m']}m:{e['grade']}"
+                                               for e in entries)}},
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=5,
+        )
+        if resp.status_code != 200:
+            logger.warning('[LEADERBOARD] ops event returned %s: %s',
+                           resp.status_code, resp.text[:120])
+    except Exception as e:  # noqa: BLE001
+        logger.warning('[LEADERBOARD] ops event failed: %s', e)
 
 
 def mark_activity_calculated(activity_id, extra=None):
