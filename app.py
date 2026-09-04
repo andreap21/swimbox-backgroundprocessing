@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from celery_app import celery
-from tasks import hello_task, calculate_leaderboard_task, replan_athlete_task, match_activity_task
+from tasks import hello_task, calculate_leaderboard_task, replan_athlete_task, match_activity_task, validate_video_task
 from auth import token_required
 
 app = Flask(__name__)
@@ -59,3 +59,25 @@ def replan_athlete():
 
 if __name__ == '__main__':
     app.run(debug=True, port=5003)
+
+
+@app.route('/events/validate-video', methods=['POST'])
+@token_required
+def validate_video():
+    """Screen one uploaded video for swimming content.
+
+    Enqueued by swimboxapis the moment Bunny reports a video playable. Screening
+    is the content-moderation layer, so a dropped job is alarmed on the caller's
+    side rather than failing silently here.
+    """
+    payload = request.get_json(force=True) or {}
+    submission_id = payload.get('submission_id')
+    video_asset_id = payload.get('video_asset_id')
+    bunny_video_id = payload.get('bunny_video_id')
+    if not submission_id or not video_asset_id or not bunny_video_id:
+        return jsonify({
+            'error': 'submission_id, video_asset_id and bunny_video_id are required'
+        }), 400
+    validate_video_task.delay(
+        submission_id, video_asset_id, bunny_video_id, payload.get('library_id'))
+    return jsonify({'message': 'Task enqueued'}), 202

@@ -42,3 +42,24 @@ def replan_athlete_task(user_id, mode='weekly'):
     'weekly' = review + append next week; 'daily' = prose only (reserved)."""
     from services.replan import run_replan_for_user
     run_replan_for_user(user_id, mode=mode)
+
+
+@celery.task(name='tasks.validate_video_task', bind=True, max_retries=2)
+def validate_video_task(self, submission_id, video_asset_id, bunny_video_id, library_id=None):
+    """AI screening for an uploaded swim video (Trello doifu3bM).
+
+    Screening FAILS CLOSED: if we cannot see the frames we cannot say the video
+    is swimming, so it does not pass. But a CDN blip or a rate limit shouldn't
+    cost an athlete their upload, so a transient failure is retried before the
+    rejection sticks. Bunny also needs a moment after 'Finished' before the seek
+    sprite is actually on the CDN, which the first retry usually covers.
+    """
+    from services.video_validation import run_validation, UNABLE, RETRY_DELAY_SECONDS
+
+    verdict = run_validation(submission_id, video_asset_id, bunny_video_id, library_id)
+    if verdict == UNABLE and self.request.retries < self.max_retries:
+        logger.warning(
+            '[VIDEOSCREEN] %s/%s could not be validated; retry %s/%s in %ss',
+            submission_id, video_asset_id,
+            self.request.retries + 1, self.max_retries, RETRY_DELAY_SECONDS)
+        raise self.retry(countdown=RETRY_DELAY_SECONDS)
