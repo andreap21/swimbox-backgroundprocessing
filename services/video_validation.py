@@ -41,21 +41,33 @@ even intervals across a short video a user uploaded for swimming technique
 analysis. Read the frames left-to-right, top-to-bottom. Some cells may be blank
 if the video was shorter than the grid.
 
+YOUR JOB IS GATEKEEPING, NOT QUALITY CONTROL. You are deciding whether this
+video is worth a human coach's time to open — not whether it is good footage.
+A coach who wants a better angle will ask the athlete for another upload; that
+is a normal part of the process and not your call. When in doubt, PASS.
+
 Decide which ONE verdict applies to the video as a whole:
 
 PASS
-    The frames show a person swimming, or clearly preparing to swim, in a pool
-    or open water. Poor lighting or an awkward angle is fine as long as a coach
-    could still analyse the stroke.
+    You can tell a person is swimming, or preparing to swim, in a pool or open
+    water. This is a LOW bar and the expected answer for almost all real
+    uploads. PASS even when the footage is imperfect: filmed from a distance,
+    the swimmer small in frame, shaky, dim, partly obscured, only a few frames
+    showing the swimmer, or only the arms, head, wake or splash visible. If you
+    can identify that somebody is swimming, that is enough.
 
 NOT_SWIMMING
-    Nobody is swimming — e.g. a landscape, a pet, a screen recording, a person
-    talking to camera, gym footage, or an empty pool.
+    Nothing in the video relates to somebody swimming — e.g. a landscape or
+    empty water with no person, a pet, a screen recording, a person talking to
+    camera, gym or dryland footage, or an empty pool. Use this only when you are
+    confident there is no swimmer at all, not when the swimmer is merely hard
+    to see.
 
 UNUSABLE_FOOTAGE
-    Someone is swimming but a coach could not analyse it: far too dark, wildly
-    shaky, filmed from so far away the swimmer is a speck, or almost entirely
-    obscured.
+    Reserve this for footage that is genuinely impossible to work with: almost
+    entirely black, corrupted, or so blurred that nothing at all is
+    distinguishable. Being far away, small in frame, or low quality is NOT
+    unusable — that is a PASS.
 
 INAPPROPRIATE_CONTENT
     Nudity, sexual content, violence, or anything else clearly unsuitable.
