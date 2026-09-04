@@ -65,11 +65,35 @@ Answer with a single line of JSON and nothing else:
 {"verdict": "<one of the four>", "reason": "<max 12 words>"}"""
 
 
+# Bunny pull zones carry an "Allowed Referrers" check; a bare server request is
+# refused with 403. The embed player at iframe.mediadelivery.net is on every
+# library's default allow-list, so presenting that Referer (plus a browser-shaped
+# UA) is what lets a backend read the file. Same approach the voiceover pipeline
+# uses against the curated library — see
+# smartcoach-datasetup/voiceover-pipeline/src/voiceover_pipeline/bunny.py.
+_CDN_HEADERS = {
+    "Referer": "https://iframe.mediadelivery.net/",
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+}
+
+
 def _fetch_sprite(bunny_video_id, cdn_hostname):
+    """Fetch the seek sprite: a 6x6 grid of frames sampled across the clip.
+
+    One request covers a whole <=60s video, so this is the entire frame-sampling
+    step — no MP4 download and no ffmpeg.
+    """
     url = f"https://{cdn_hostname}/{bunny_video_id}/seek/_0.jpg"
-    resp = requests.get(url, timeout=20)
+    resp = requests.get(url, timeout=20, headers=_CDN_HEADERS)
     if resp.status_code != 200:
         raise RuntimeError(f"sprite fetch returned {resp.status_code} for {url}")
+    if not resp.content.startswith(b"\xff\xd8"):
+        # A 200 carrying an HTML error page would otherwise reach the model as
+        # a garbage image and come back as a confident wrong verdict.
+        raise RuntimeError(f"sprite fetch returned non-JPEG content for {url}")
     return base64.standard_b64encode(resp.content).decode('utf-8')
 
 
